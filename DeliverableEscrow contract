@@ -1,0 +1,147 @@
+# deliverable_escrow.py
+
+from genlayer import *
+import json
+
+
+class AgreementStatus:
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    PARTIAL = "PARTIAL"
+    DISPUTED = "DISPUTED"
+    RELEASED = "RELEASED"
+
+
+class Agreement(gl.Struct):
+    client: Address
+    worker: Address
+    amount: u256
+    spec: str
+    deliverable_evidence: str
+    status: str
+    partial_percent: u256
+    created_at: u256
+    submitted_at: u256
+    evaluated_at: u256
+
+
+class DeliverableEscrow(gl.Contract):
+    agreements: TreeMap[u256, Agreement]
+    next_id: u256
+
+    def __init__(self):
+        self.next_id = u256(0)
+
+    @gl.public.write.payable
+    def create_agreement(self, worker: str, spec: str) -> u256:
+        # Address params are taken as str and converted internally.
+        # Typing Address directly in the signature causes a Studio
+        # calldata encoding bug.
+        worker_address = Address(worker)
+        amount = gl.message.value
+
+        if amount <= 0:
+            raise Exception("Amount must be greater than zero")
+        if len(spec.strip()) == 0:
+            raise Exception("Spec cannot be empty")
+
+        agreement_id = self.next_id
+        self.next_id += u256(1)
+
+        self.agreements[agreement_id] = Agreement(
+            client=gl.message.sender_address,
+            worker=worker_address,
+            amount=u256(amount),
+            spec=spec,
+            deliverable_evidence="",
+            status=AgreementStatus.PENDING,
+            partial_percent=u256(0),
+            created_at=u256(gl.block.timestamp),
+            submitted_at=u256(0),
+            evaluated_at=u256(0),
+        )
+
+        return agreement_id
+
+    @gl.public.write
+    def submit_deliverable(self, agreement_id: u256, evidence: str) -> None:
+        agreement = self.agreements[agreement_id]
+
+        if gl.message.sender_address != agreement.worker:
+            raise Exception("Only the assigned worker can submit the deliverable")
+        if agreement.status != AgreementStatus.PENDING:
+            raise Exception("Agreement is not in a submittable state")
+        if len(evidence.strip()) == 0:
+            raise Exception("Evidence cannot be empty")
+
+        agreement.deliverable_evidence = evidence
+        agreement.submitted_at = u256(gl.block.timestamp)
+        self.agreements[agreement_id] = agreement
+
+    @gl.public.write
+    def evaluate_deliverable(self, agreement_id: u256) -> None:
+        agreement = self.agreements[agreement_id]
+
+        if agreement.status != AgreementStatus.PENDING:
+            raise Exception("Agreement already evaluated or not ready")
+        if len(agreement.deliverable_evidence.strip()) == 0:
+            raise Exception("No deliverable submitted yet")
+
+        spec = agreement.spec
+        evidence = agreement.deliverable_evidence
+
+        def evaluate() -> str:
+            prompt = f"""
+You are an impartial evaluator comparing delivered work against an agreed
+specification. Respond with ONLY a JSON object, no extra text, in this
+exact shape:
+
+{{"decision": "ACCEPTED" | "REJECTED" | "PARTIAL", "percent": <integer 0-100>}}
+
+Rules:
+- ACCEPTED: the evidence fully satisfies the spec. percent must be 100.
+- REJECTED: the evidence does not meaningfully satisfy the spec. percent must be 0.
+- PARTIAL: the evidence satisfies part of the spec. percent is your honest
+  estimate (1-99) of how much of the spec was fulfilled.
+
+Specification:
+{spec}
+
+Submitted evidence:
+{evidence}
+"""
+            result = gl.nondet.exec_prompt(prompt)
+            return result.strip()
+
+        # Non-comparative pattern: each validator independently produces
+        # a result. Consensus only requires agreement on the objective
+        # "decision" field, not an exact string match.
+        def compare(a: str, b: str) -> bool:
+            try:
+                da = json.loads(a)
+                db = json.loads(b)
+            except Exception:
+                return False
+            return da.get("decision") == db.get("decision")
+
+        raw_result = gl.eq_principle.prompt_comparative(evaluate, compare)
+
+        parsed = json.loads(raw_result)
+        decision = parsed.get("decision")
+        percent = int(parsed.get("percent", 0))
+
+        if decision not in (AgreementStatus.ACCEPTED, AgreementStatus.REJECTED, AgreementStatus.PARTIAL):
+            raise Exception("Validators returned an invalid decision")
+
+        agreement.status = decision
+        agreement.partial_percent = u256(
+            percent if decision == AgreementStatus.PARTIAL
+            else (100 if decision == AgreementStatus.ACCEPTED else 0)
+        )
+        agreement.evaluated_at = u256(gl.block.timestamp)
+        self.agreements[agreement_id] = agreement
+
+    @gl.public.view
+    def get_agreement(self, agreement_id: u256) -> Agreement:
+        return self.agreements[agreement_id]
