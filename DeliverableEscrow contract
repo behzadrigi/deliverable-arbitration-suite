@@ -91,7 +91,7 @@ class DeliverableEscrow(gl.Contract):
         spec = agreement.spec
         evidence = agreement.deliverable_evidence
 
-        def evaluate() -> str:
+        def leader_fn():
             prompt = f"""
 You are an impartial evaluator comparing delivered work against an agreed
 specification. Respond with ONLY a JSON object, no extra text, in this
@@ -111,25 +111,20 @@ Specification:
 Submitted evidence:
 {evidence}
 """
-            result = gl.nondet.exec_prompt(prompt)
-            return result.strip()
+            response = gl.nondet.exec_prompt(prompt)
+            return json.loads(response)
 
-        # Non-comparative pattern: each validator independently produces
-        # a result. Consensus only requires agreement on the objective
-        # "decision" field, not an exact string match.
-        def compare(a: str, b: str) -> bool:
-            try:
-                da = json.loads(a)
-                db = json.loads(b)
-            except Exception:
+        def validator_fn(leader_result) -> bool:
+            if not isinstance(leader_result, gl.vm.Return):
                 return False
-            return da.get("decision") == db.get("decision")
+            validator_data = leader_fn()
+            leader_data = leader_result.calldata
+            return leader_data.get("decision") == validator_data.get("decision")
 
-        raw_result = gl.eq_principle.prompt_comparative(evaluate, compare)
+        result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
-        parsed = json.loads(raw_result)
-        decision = parsed.get("decision")
-        percent = int(parsed.get("percent", 0))
+        decision = result.get("decision")
+        percent = int(result.get("percent", 0))
 
         if decision not in (AgreementStatus.ACCEPTED, AgreementStatus.REJECTED, AgreementStatus.PARTIAL):
             raise Exception("Validators returned an invalid decision")
