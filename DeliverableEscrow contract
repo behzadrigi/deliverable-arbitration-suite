@@ -16,9 +16,6 @@ class Agreement:
     deliverable_evidence: str
     status: str
     partial_percent: u256
-    created_at: u256
-    submitted_at: u256
-    evaluated_at: u256
 
 
 class DeliverableEscrow(gl.Contract):
@@ -51,9 +48,6 @@ class DeliverableEscrow(gl.Contract):
             deliverable_evidence="",
             status="PENDING",
             partial_percent=u256(0),
-            created_at=u256(gl.block.timestamp),
-            submitted_at=u256(0),
-            evaluated_at=u256(0),
         )
 
         return agreement_id
@@ -70,7 +64,6 @@ class DeliverableEscrow(gl.Contract):
         assert evidence.strip() != "", "Evidence cannot be empty"
 
         agreement.deliverable_evidence = evidence
-        agreement.submitted_at = u256(gl.block.timestamp)
         self.agreements[agreement_id] = agreement
 
     @gl.public.write
@@ -144,7 +137,6 @@ class DeliverableEscrow(gl.Contract):
 
         agreement.status = decision
         agreement.partial_percent = u256(percent)
-        agreement.evaluated_at = u256(gl.block.timestamp)
         self.agreements[agreement_id] = agreement
 
     # ================= PUBLIC VIEW METHODS =================
