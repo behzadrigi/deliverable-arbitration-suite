@@ -67,6 +67,49 @@ does not exist in the current GenLayer SDK
 all three fields were removed. None of the contract's actual logic
 depended on timestamps, so removing them did not change any behavior.
 
+## Why terminal settlement and a cancellation path were added
+
+The first submitted version of DeliverableEscrow could lock funds via
+`create_agreement` but had no method to actually pay the worker,
+refund the client, or recover funds from an agreement that never
+completes. A steward review correctly flagged this as a real gap:
+every deposit would stay locked forever. `release_funds` closes this
+gap by paying out according to the already-agreed decision, and
+`cancel_agreement` gives the client a way to reclaim funds if a
+worker never submits anything, without allowing cancellation after
+work has already been submitted for evaluation. Because
+`gl.block.timestamp` is unavailable in this SDK, cancellation is a
+state-based recovery path (available while an agreement is PENDING
+with no submitted evidence) rather than a time-based timeout.
+
+## Why release_funds validates the decision/percentage combination
+
+A steward review also asked that validators bind the payout percentage
+to the decision, rather than trusting whatever a leader proposes.
+`evaluate_deliverable` now enforces this inside the leader function
+itself, before a result can ever reach validator comparison or state:
+ACCEPTED must carry percent 100, REJECTED must carry percent 0, and
+PARTIAL must carry a percent strictly between 1 and 99. A second,
+identical check runs again immediately before state is mutated, as
+defense in depth against any future code path that might bypass the
+leader function.
+
+## Why value transfers use gl.get_contract_at(...).emit(value=...).__receive__()
+
+Sending native GEN out of a contract turned out to need a very
+specific, documented call shape. Several plausible-looking
+alternatives, including `gl.emit_transfer(address, amount)`, a bare
+`emit_transfer(address, amount)`, and `gl.ContractAt(address).emit_transfer(value=amount)`,
+all failed against the deployed SDK with AttributeError or NameError.
+The pattern that actually works, confirmed against GenLayer's official
+SDK API reference, is to obtain a proxy for the target address with
+`gl.get_contract_at(address)`, attach the value with `.emit(value=amount)`,
+and invoke `.__receive__()`, which is the documented handler for a
+plain value transfer with no specific method call attached. This was
+verified end to end on GenLayer Studio: `release_funds` and
+`cancel_agreement` both now move real GEN between the contract and the
+client or worker address.
+
 ## Why DisputeEscalation caps escalation at three stages
 
 An unbounded escalation process could be dragged out indefinitely by
