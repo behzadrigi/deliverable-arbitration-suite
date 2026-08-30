@@ -16,6 +16,7 @@ class Agreement:
     deliverable_evidence: str
     status: str
     partial_percent: u256
+    settled: bool
 
 
 class DeliverableEscrow(gl.Contract):
@@ -29,8 +30,6 @@ class DeliverableEscrow(gl.Contract):
 
     @gl.public.write.payable
     def create_agreement(self, worker: str, spec: str) -> u256:
-        # worker is accepted as a plain hex string and converted to
-        # Address internally, per GenLayer's documented pattern.
         worker_address = Address(worker)
         amount = gl.message.value
 
@@ -48,9 +47,35 @@ class DeliverableEscrow(gl.Contract):
             deliverable_evidence="",
             status="PENDING",
             partial_percent=u256(0),
+            settled=False,
         )
 
         return agreement_id
+
+    @gl.public.write
+    def cancel_agreement(self, agreement_id: u256):
+        # Recovery path: as long as the worker has not submitted anything
+        # yet, the client can cancel and reclaim the full deposit. This
+        # avoids funds being locked forever if a worker never engages.
+        # Note: GenLayer's SDK in this environment has no block timestamp
+        # primitive available, so this is a state-based recovery path
+        # rather than a time-based timeout. See DECISIONS.md.
+        assert agreement_id in self.agreements
+        agreement = self.agreements[agreement_id]
+
+        assert gl.message.sender_address == agreement.client, \
+            "Only the client can cancel this agreement"
+        assert agreement.status == "PENDING", \
+            "Agreement can only be cancelled while pending"
+        assert agreement.deliverable_evidence.strip() == "", \
+            "Cannot cancel after a deliverable has been submitted"
+        assert not agreement.settled, "Agreement already settled"
+
+        agreement.status = "CANCELLED"
+        agreement.settled = True
+        self.agreements[agreement_id] = agreement
+
+        gl.emit_transfer(agreement.client, agreement.amount)
 
     @gl.public.write
     def submit_deliverable(self, agreement_id: u256, evidence: str):
@@ -109,9 +134,18 @@ class DeliverableEscrow(gl.Contract):
             decision = str(data.get("decision", "")).upper()
             if decision not in ("ACCEPTED", "REJECTED", "PARTIAL"):
                 raise gl.vm.UserError("[LLM_ERROR] validator returned an invalid decision")
+            percent = int(data.get("percent", 0))
+
+            if decision == "ACCEPTED" and percent != 100:
+                raise gl.vm.UserError("[LLM_ERROR] ACCEPTED must carry percent 100")
+            if decision == "REJECTED" and percent != 0:
+                raise gl.vm.UserError("[LLM_ERROR] REJECTED must carry percent 0")
+            if decision == "PARTIAL" and not (1 <= percent <= 99):
+                raise gl.vm.UserError("[LLM_ERROR] PARTIAL must carry percent between 1 and 99")
+
             return {
                 "decision": decision,
-                "percent": int(data.get("percent", 0)),
+                "percent": percent,
             }
 
         def validator_fn(leader_result) -> bool:
@@ -124,19 +158,46 @@ class DeliverableEscrow(gl.Contract):
 
             validator_data = leader_fn()
 
-            # Partial field matching: only the objective "decision" field
-            # must match. Percent may vary slightly between validators.
             return leader_data["decision"] == validator_data["decision"]
 
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
         decision = result["decision"]
-        percent = result["percent"] if decision == "PARTIAL" else (
-            100 if decision == "ACCEPTED" else 0
-        )
+        percent = result["percent"]
+
+        if decision == "ACCEPTED":
+            assert percent == 100, "Invalid ACCEPTED percent"
+        elif decision == "REJECTED":
+            assert percent == 0, "Invalid REJECTED percent"
+        else:
+            assert 1 <= percent <= 99, "Invalid PARTIAL percent"
 
         agreement.status = decision
         agreement.partial_percent = u256(percent)
+        self.agreements[agreement_id] = agreement
+
+    @gl.public.write
+    def release_funds(self, agreement_id: u256):
+        assert agreement_id in self.agreements
+        agreement = self.agreements[agreement_id]
+
+        assert agreement.status in ("ACCEPTED", "REJECTED", "PARTIAL"), \
+            "Agreement has not been evaluated yet"
+        assert not agreement.settled, "Funds already released for this agreement"
+
+        if agreement.status == "ACCEPTED":
+            gl.emit_transfer(agreement.worker, agreement.amount)
+        elif agreement.status == "REJECTED":
+            gl.emit_transfer(agreement.client, agreement.amount)
+        else:
+            worker_share = (agreement.amount * agreement.partial_percent) // u256(100)
+            client_share = agreement.amount - worker_share
+            if worker_share > 0:
+                gl.emit_transfer(agreement.worker, worker_share)
+            if client_share > 0:
+                gl.emit_transfer(agreement.client, client_share)
+
+        agreement.settled = True
         self.agreements[agreement_id] = agreement
 
     # ================= PUBLIC VIEW METHODS =================
@@ -152,3 +213,9 @@ class DeliverableEscrow(gl.Contract):
         if agreement_id not in self.agreements:
             return "NOT_FOUND"
         return self.agreements[agreement_id].deliverable_evidence
+
+    @gl.public.view
+    def is_settled(self, agreement_id: u256) -> bool:
+        if agreement_id not in self.agreements:
+            return False
+        return self.agreements[agreement_id].settled
