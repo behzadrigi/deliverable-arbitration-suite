@@ -75,7 +75,7 @@ class DeliverableEscrow(gl.Contract):
         agreement.settled = True
         self.agreements[agreement_id] = agreement
 
-        gl.emit_transfer(agreement.client, agreement.amount)
+        emit_transfer(agreement.client, agreement.amount)
 
     @gl.public.write
     def submit_deliverable(self, agreement_id: u256, evidence: str):
@@ -186,16 +186,16 @@ class DeliverableEscrow(gl.Contract):
         assert not agreement.settled, "Funds already released for this agreement"
 
         if agreement.status == "ACCEPTED":
-            gl.emit_transfer(agreement.worker, agreement.amount)
+            emit_transfer(agreement.worker, agreement.amount)
         elif agreement.status == "REJECTED":
-            gl.emit_transfer(agreement.client, agreement.amount)
+            emit_transfer(agreement.client, agreement.amount)
         else:
             worker_share = (agreement.amount * agreement.partial_percent) // u256(100)
             client_share = agreement.amount - worker_share
             if worker_share > 0:
-                gl.emit_transfer(agreement.worker, worker_share)
+                emit_transfer(agreement.worker, worker_share)
             if client_share > 0:
-                gl.emit_transfer(agreement.client, client_share)
+                emit_transfer(agreement.client, client_share)
 
         agreement.settled = True
         self.agreements[agreement_id] = agreement
