@@ -54,12 +54,6 @@ class DeliverableEscrow(gl.Contract):
 
     @gl.public.write
     def cancel_agreement(self, agreement_id: u256):
-        # Recovery path: as long as the worker has not submitted anything
-        # yet, the client can cancel and reclaim the full deposit. This
-        # avoids funds being locked forever if a worker never engages.
-        # Note: GenLayer's SDK in this environment has no block timestamp
-        # primitive available, so this is a state-based recovery path
-        # rather than a time-based timeout. See DECISIONS.md.
         assert agreement_id in self.agreements
         agreement = self.agreements[agreement_id]
 
@@ -75,7 +69,7 @@ class DeliverableEscrow(gl.Contract):
         agreement.settled = True
         self.agreements[agreement_id] = agreement
 
-        gl.ContractAt(agreement.client).emit_transfer(value=agreement.amount)
+        gl.get_contract_at(agreement.client).emit(value=agreement.amount).__receive__()
 
     @gl.public.write
     def submit_deliverable(self, agreement_id: u256, evidence: str):
@@ -186,16 +180,16 @@ class DeliverableEscrow(gl.Contract):
         assert not agreement.settled, "Funds already released for this agreement"
 
         if agreement.status == "ACCEPTED":
-            gl.ContractAt(agreement.worker).emit_transfer(value=agreement.amount)
+            gl.get_contract_at(agreement.worker).emit(value=agreement.amount).__receive__()
         elif agreement.status == "REJECTED":
-            gl.ContractAt(agreement.client).emit_transfer(value=agreement.amount)
+            gl.get_contract_at(agreement.client).emit(value=agreement.amount).__receive__()
         else:
             worker_share = (agreement.amount * agreement.partial_percent) // u256(100)
             client_share = agreement.amount - worker_share
             if worker_share > 0:
-                gl.ContractAt(agreement.worker).emit_transfer(value=worker_share)
+                gl.get_contract_at(agreement.worker).emit(value=worker_share).__receive__()
             if client_share > 0:
-                gl.ContractAt(agreement.client).emit_transfer(value=client_share)
+                gl.get_contract_at(agreement.client).emit(value=client_share).__receive__()
 
         agreement.settled = True
         self.agreements[agreement_id] = agreement
