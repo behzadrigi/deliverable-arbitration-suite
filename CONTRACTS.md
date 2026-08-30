@@ -10,7 +10,8 @@ state can or cannot change under which outcomes.
 
 Holds a client's funds in escrow for a piece of work and releases them
 only once GenLayer validators independently agree on whether the
-delivered evidence satisfies the agreed specification.
+delivered evidence satisfies the agreed specification. Also provides a
+recovery path so funds are never permanently locked.
 
 **How consensus is used**
 
@@ -21,7 +22,31 @@ percentage for PARTIAL. Every validator independently re-runs the same
 comparison. Only the objective `decision` field must match across
 validators; the free-text reasoning and the exact percentage are
 allowed to vary slightly between independent LLM calls, so only the
-field the outcome actually depends on is bound by consensus.
+field the outcome actually depends on is bound by consensus. The
+decision/percentage combination itself is validated inside the leader
+function before it can ever reach state (ACCEPTED must carry 100,
+REJECTED must carry 0, PARTIAL must carry 1-99), with a second
+defense-in-depth check at the point of state mutation.
+
+`release_funds` and `cancel_agreement` are fully deterministic and do
+not use consensus, since moving already-agreed-upon funds is a
+mechanical bookkeeping step, not a judgment call.
+
+**Terminal settlement and recovery**
+
+- `release_funds` can only be called once an agreement has reached
+  ACCEPTED, REJECTED, or PARTIAL, and only once per agreement. ACCEPTED
+  sends the full amount to the worker, REJECTED returns the full amount
+  to the client, and PARTIAL splits the amount according to the agreed
+  percentage.
+- `cancel_agreement` lets the client reclaim the full deposit, but only
+  while the agreement is still PENDING and the worker has not yet
+  submitted anything. This prevents funds from being locked forever if
+  a worker never engages, without allowing a client to cancel after
+  work has already been submitted for evaluation.
+- Value is sent using GenLayer's documented value-transfer pattern,
+  `gl.get_contract_at(address).emit(value=amount).__receive__()`, which
+  performs a real transfer to a client or worker address.
 
 **Safety properties**
 
@@ -33,7 +58,14 @@ field the outcome actually depends on is bound by consensus.
   or accepted agreement cannot be re-evaluated to "shop" for a
   different outcome.
 - No state transition to ACCEPTED, REJECTED, or PARTIAL happens
-  without validator consensus on the decision field.
+  without validator consensus on the decision field, and the
+  decision/percentage combination is enforced rather than trusted.
+- `release_funds` can only move funds once per agreement, guarded by a
+  `settled` flag, so a settled agreement cannot be paid out twice.
+- `cancel_agreement` can only be called by the client, only while
+  PENDING, and only before any deliverable evidence has been
+  submitted, so a worker who has already submitted work cannot be
+  cut out by a late cancellation.
 
 ## EvidenceCorroboration
 
