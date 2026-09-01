@@ -128,7 +128,7 @@ class DeliverableEscrow(gl.Contract):
         spec = self.spec[agreement_id]
         evidence = self.evidence[agreement_id]
 
-        def leader_fn() -> str:
+        def leader_fn():
             prompt = f"""
 Compare the submitted evidence against the specification and judge whether
 the delivered work satisfies it.
@@ -149,17 +149,29 @@ decision is PARTIAL. Do not use any other percent value.
 
             raw = gl.nondet.exec_prompt(prompt)
             parsed = json.loads(raw)
-            decision = parsed["decision"]
-            percent = u256(int(parsed["percent"]))
-            self._validate_decision_percent(decision, percent)
-            # Only decision + percent are returned — this is exactly the
-            # value the Equivalence Principle check below compares across
-            # validators, so both fields are now genuinely under consensus.
-            return f"{decision}:{int(percent)}"
+            decision = str(parsed["decision"]).upper()
+            percent = int(parsed["percent"])
+            self._validate_decision_percent(decision, u256(percent))
+            return {"decision": decision, "percent": percent}
 
-        outcome = gl.vm.run_nondet_unsafe(leader_fn)
-        decision, percent_str = outcome.split(":")
-        percent = u256(int(percent_str))
+        def validator_fn(leader_result) -> bool:
+            if not isinstance(leader_result, gl.vm.Return):
+                return False
+            leader_data = leader_result.calldata
+            if leader_data.get("decision") not in ("ACCEPTED", "REJECTED", "PARTIAL"):
+                return False
+            validator_data = leader_fn()
+            # Both decision AND percent must match across independent
+            # validator runs, so percent is genuinely bound by consensus,
+            # not just range-checked by each validator in isolation.
+            return (
+                leader_data.get("decision") == validator_data.get("decision")
+                and leader_data.get("percent") == validator_data.get("percent")
+            )
+
+        result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+        decision = result["decision"]
+        percent = u256(int(result["percent"]))
         self._validate_decision_percent(decision, percent)
 
         self.status[agreement_id] = decision
