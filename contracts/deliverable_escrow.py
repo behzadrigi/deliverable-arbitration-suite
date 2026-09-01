@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:test" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 # DeliverableEscrow — rebuilt from scratch to close two steward-flagged gaps:
 #
 #   1) No recovery path once evidence was submitted (only evaluate_deliverable
@@ -97,12 +97,14 @@ class DeliverableEscrow(gl.Contract):
         sender = gl.message.sender_address
         proposal = f"{decision}:{int(percent)}"
 
-        if sender == self.client[agreement_id]:
+        is_client = sender == self.client[agreement_id]
+        is_worker = sender == self.worker[agreement_id]
+        assert is_client or is_worker, "only the client or worker on this agreement can propose a resolution"
+
+        if is_client:
             self.client_proposal[agreement_id] = proposal
-        elif sender == self.worker[agreement_id]:
-            self.worker_proposal[agreement_id] = proposal
         else:
-            raise Exception("only the client or worker on this agreement can propose a resolution")
+            self.worker_proposal[agreement_id] = proposal
 
         client_p = self.client_proposal.get(agreement_id, "")
         worker_p = self.worker_proposal.get(agreement_id, "")
@@ -198,7 +200,7 @@ decision is PARTIAL. Do not use any other percent value.
         elif decision == "PARTIAL":
             assert p in (25, 50, 75), "PARTIAL percent must be exactly 25, 50, or 75"
         else:
-            raise Exception(f"invalid decision: {decision}")
+            assert False, f"invalid decision: {decision}"
 
     # ------------------------------------------------------------------ #
     # Views
