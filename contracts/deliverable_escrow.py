@@ -1,20 +1,4 @@
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
-#
-# DeliverableEscrow — closes two steward-flagged gaps:
-#
-#   1) No recovery path once evidence was submitted. gl.block.timestamp does
-#      not exist in this SDK, so a time-based timeout is not possible. Fix:
-#      propose_resolution — a mutual, deterministic recovery path. Either
-#      party can propose a decision + percent after submission; the
-#      agreement only settles once BOTH sides have proposed the exact same
-#      outcome. No unilateral trust on either side, no timestamp required.
-#
-#   2) PARTIAL percent was only range-checked, never actually compared
-#      across validators. Fix: the LLM must choose percent from a small
-#      fixed set {25, 50, 75}. That discrete value is now part of what the
-#      leader/validator Equivalence Principle check compares, exactly like
-#      the decision field already was — so percent is genuinely bound by
-#      consensus, not just leader-asserted and range-validated.
 
 import json
 
