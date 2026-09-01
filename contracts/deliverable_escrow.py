@@ -37,6 +37,17 @@ class Agreement:
     worker_proposal: str
 
 
+def _validate_decision_percent(decision: str, percent: int):
+    if decision == "ACCEPTED":
+        assert percent == 100, "ACCEPTED must carry percent 100"
+    elif decision == "REJECTED":
+        assert percent == 0, "REJECTED must carry percent 0"
+    elif decision == "PARTIAL":
+        assert percent in (25, 50, 75), "PARTIAL percent must be exactly 25, 50, or 75"
+    else:
+        assert False, "invalid decision: " + decision
+
+
 class DeliverableEscrow(gl.Contract):
     agreements: TreeMap[u256, Agreement]
     next_id: u256
@@ -102,7 +113,7 @@ class DeliverableEscrow(gl.Contract):
         agreement.partial_percent = u256(0)
         self.agreements[agreement_id] = agreement
 
-        self._payout(agreement_id)
+        self.release_funds(agreement_id)
 
     # ================= POST-SUBMISSION RECOVERY (MUTUAL RESOLUTION) =================
 
@@ -115,7 +126,7 @@ class DeliverableEscrow(gl.Contract):
             "Agreement is not awaiting resolution"
 
         decision_upper = decision.upper()
-        self._validate_decision_percent(decision_upper, percent)
+        _validate_decision_percent(decision_upper, int(percent))
 
         sender = gl.message.sender_address
         is_client = sender == agreement.client
@@ -139,7 +150,7 @@ class DeliverableEscrow(gl.Contract):
             agreement.status = decision_upper
             agreement.partial_percent = percent
             self.agreements[agreement_id] = agreement
-            self._payout(agreement_id)
+            self.release_funds(agreement_id)
 
     # ================= LLM-JUDGED EVALUATION (PRIMARY PATH) =================
 
@@ -188,7 +199,7 @@ class DeliverableEscrow(gl.Contract):
             percent = int(data.get("percent", 0))
 
             try:
-                self._validate_decision_percent(decision, u256(percent))
+                _validate_decision_percent(decision, percent)
             except AssertionError:
                 raise gl.vm.UserError("[LLM_ERROR] invalid decision/percent combination")
 
@@ -217,13 +228,13 @@ class DeliverableEscrow(gl.Contract):
         decision = result["decision"]
         percent = u256(result["percent"])
 
-        self._validate_decision_percent(decision, percent)
+        _validate_decision_percent(decision, int(percent))
 
         agreement.status = decision
         agreement.partial_percent = percent
         self.agreements[agreement_id] = agreement
 
-        self._payout(agreement_id)
+        self.release_funds(agreement_id)
 
     # ================= SETTLEMENT =================
 
@@ -234,11 +245,6 @@ class DeliverableEscrow(gl.Contract):
 
         assert agreement.status in ("ACCEPTED", "REJECTED", "PARTIAL"), \
             "Agreement has not reached a final decision yet"
-
-        self._payout(agreement_id)
-
-    def _payout(self, agreement_id: u256):
-        agreement = self.agreements[agreement_id]
 
         if agreement.settled:
             return
@@ -255,17 +261,6 @@ class DeliverableEscrow(gl.Contract):
             gl.get_contract_at(agreement.worker).emit(value=u256(worker_amount)).__receive__()
         if client_amount > 0:
             gl.get_contract_at(agreement.client).emit(value=u256(client_amount)).__receive__()
-
-    def _validate_decision_percent(self, decision: str, percent: u256):
-        p = int(percent)
-        if decision == "ACCEPTED":
-            assert p == 100, "ACCEPTED must carry percent 100"
-        elif decision == "REJECTED":
-            assert p == 0, "REJECTED must carry percent 0"
-        elif decision == "PARTIAL":
-            assert p in (25, 50, 75), "PARTIAL percent must be exactly 25, 50, or 75"
-        else:
-            assert False, "invalid decision: " + decision
 
     # ================= PUBLIC VIEW METHODS =================
 
