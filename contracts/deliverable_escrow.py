@@ -1,3 +1,4 @@
+# { "Depends": "py-genlayer:test" }
 # DeliverableEscrow — rebuilt from scratch to close two steward-flagged gaps:
 #
 #   1) No recovery path once evidence was submitted (only evaluate_deliverable
@@ -188,7 +189,7 @@ decision is PARTIAL. Do not use any other percent value.
         if client_amount > 0:
             gl.get_contract_at(self.client[agreement_id]).emit(value=client_amount).__receive__()
 
-    def _validate_decision_percent(self, decision: str, percent) -> None:
+    def _validate_decision_percent(self, decision: str, percent: u256) -> None:
         p = int(percent)
         if decision == "ACCEPTED":
             assert p == 100, "ACCEPTED must carry percent 100"
