@@ -18,7 +18,7 @@ funds and real consequences tied to the outcome.
 
 | Contract | Purpose | Consensus pattern |
 |---|---|---|
-| [DeliverableEscrow](contracts/deliverable_escrow.py) | Holds funds, releases them based on an agreed ACCEPTED / REJECTED / PARTIAL verdict comparing delivered work to a spec, and supports a client-initiated cancellation path before a deliverable is submitted | Custom leader/validator, partial field matching |
+| [DeliverableEscrow](contracts/deliverable_escrow.py) | Holds funds, releases them based on an agreed ACCEPTED / REJECTED / PARTIAL verdict, supports client-initiated cancellation before submission, and a mutual client-worker resolution path if evaluation never happens after submission | Custom leader/validator, partial field matching on both decision and percent |
 | [EvidenceCorroboration](contracts/evidence_corroboration.py) | Fetches a live web page and verifies a submitted claim against its actual content | Custom leader/validator with live web data |
 | [DisputeEscalation](contracts/dispute_escalation.py) | Multi-stage challenge process that can uphold or overturn a prior decision against explicit criteria | Custom leader/validator, non-comparative with explicit criteria |
 | [ReputationLedger](contracts/reputation_ledger.py) | Tracks each party's history of successful, failed, and partial outcomes | Fully deterministic, no LLM or consensus involved |
@@ -32,12 +32,14 @@ and tradeoffs behind the suite.
 Every method in every contract was deployed and called end to end on
 GenLayer Studio, with transaction hashes collected as evidence.
 
-- DeliverableEscrow deploy: `0xfecb235138e3bd8359b7341b94697deaa22f3c76f8db4428d7b9aa4621f536a9`
-- DeliverableEscrow create_agreement: `0x06482085d7689139a8dc02484559537efa435e8d4f67c4dde7e759a00119f90c`
-- DeliverableEscrow submit_deliverable: `0x03e40b10465f8b5f28f1c1ca39bb73517ac3247c3521b3ea8fd2b961fcb6fdf2`
-- DeliverableEscrow evaluate_deliverable: `0x862addf0bc44ee3a314788525cd51bac6fd4f68d67f83864dad634ece91e5ff3`
-- DeliverableEscrow release_funds: `0xbeb98f904a3618d78d5e99ddab050aae360613fa335ff2a8f65103212009eebd`
-- DeliverableEscrow cancel_agreement: `0xee4adf0b766457fae7616db43daf7c707540f20ce6d7a74dd3649dcf123a7305`
+- DeliverableEscrow deploy: `0xb97c0482ec85f98340c12f69344d2eab7c29cdb33c144d83e20a15a0968feac8`
+- DeliverableEscrow create_agreement: `0x88b4cba916edcb9a88b458b4bb0e122e32be3802bcd5ce07af31a20a3f82197a`
+- DeliverableEscrow submit_deliverable: `0xfcf80e5594627b995ae5503fb1596e6808657313df2bf5369b900dfaef2eb4e0`
+- DeliverableEscrow evaluate_deliverable: `0x32bd08d7cdae2c9961ee952b2ecd4f35bb881db1a485eefadfef483c4b934c73`
+- DeliverableEscrow release_funds: `0xcd53891198b0a3536ddfc5bac9d72834ddcdb2e8083350dbb188a837be7bfce9`
+- DeliverableEscrow cancel_agreement (second agreement): `0xcd1dc3aa2ee48b7bd0bb05498ca6c02ef61b8234fb6c62bff69c45922521a503`
+- DeliverableEscrow propose_resolution, client side (third agreement): `0x207a82a644430a051531ea27e0eb47c987f50b5f28ad6dffc01d7e255e803751`
+- DeliverableEscrow propose_resolution, worker side, triggers settlement: `0x5271163d48c65f43b104c97ca33bc7a3bdd6e1b735b5b2593d12c425d715158f`
 - EvidenceCorroboration deploy: `0x00ca953baaeeb6bb227711f95d4d020443929ce7fd9f7753d69b8247b7689ec2`
 - EvidenceCorroboration submit_claim: `0x37108d77358ea1f5288ebd1df477d940db6bce9cd712dbeb13e3e0dfd8da8584`
 - EvidenceCorroboration corroborate_claim: `0xac404f88b73fadb70d0b39d95132fbeb0376be11a1fa39eaddba847e784c8a01`
