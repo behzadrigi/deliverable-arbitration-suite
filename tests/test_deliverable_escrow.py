@@ -1,4 +1,4 @@
-"""
+ """
 Integration tests for DeliverableEscrow.
 
 These tests connect to the already-deployed contract instance on
