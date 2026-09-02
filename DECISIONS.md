@@ -20,7 +20,8 @@ demonstrate an understanding of GenLayer's Equivalence Principle, it
 just demonstrates one working example copied four times. This suite
 deliberately uses:
 
-- Partial field matching on a semantic decision (DeliverableEscrow).
+- Partial field matching on a semantic decision, extended to also
+  cover a payout-relevant number (DeliverableEscrow).
 - Partial field matching combined with live, independently-fetched
   web data (EvidenceCorroboration).
 - Partial field matching against explicit, written criteria rather
@@ -66,55 +67,59 @@ does not exist in the current GenLayer SDK
 (`AttributeError: module 'genlayer.gl' has no attribute 'block'`), so
 all three fields were removed. None of the contract's actual logic
 depended on timestamps, so removing them did not change any behavior.
+This limitation later shaped how the two recovery paths below were
+designed, since neither could rely on elapsed time.
 
-## Why terminal settlement and a cancellation path were added
+## Why DeliverableEscrow has two separate recovery paths
 
 The first submitted version of DeliverableEscrow could lock funds via
-`create_agreement` but had no method to actually pay the worker,
-refund the client, or recover funds from an agreement that never
-completes. A steward review correctly flagged this as a real gap:
-every deposit would stay locked forever. `release_funds` closes this
-gap by paying out according to the already-agreed decision, and
-`cancel_agreement` gives the client a way to reclaim funds if a
-worker never submits anything, without allowing cancellation after
-work has already been submitted for evaluation. Because
-`gl.block.timestamp` is unavailable in this SDK, cancellation is a
-state-based recovery path (available while an agreement is PENDING
-with no submitted evidence) rather than a time-based timeout.
+`create_agreement` but had no way to actually settle an agreement or
+recover funds if it never completed. A steward review correctly
+flagged this, and a first fix added `release_funds` (terminal
+settlement) and `cancel_agreement` (a pre-submission recovery path
+for the client). On resubmission, the steward correctly flagged that
+this was still incomplete: `cancel_agreement` only covers the case
+where the worker never submits anything, but does nothing for the
+case where evidence has already been submitted and
+`evaluate_deliverable` is simply never called again, or keeps
+failing.
 
-## Why release_funds validates the decision/percentage combination
+`propose_resolution` closes that second gap. Either the client or the
+worker can propose a decision and percent once evidence has been
+submitted; the agreement only settles once both sides have
+independently proposed the exact same outcome. Because
+`gl.block.timestamp` is unavailable in this SDK, a real timeout is not
+possible, so this is a mutual-consent recovery path instead of a
+time-based one: neither party can force a result alone, but the two of
+them together can always resolve a stuck agreement without waiting on
+a third party or a clock.
 
-A steward review also asked that validators bind the payout percentage
-to the decision, rather than trusting whatever a leader proposes.
-`evaluate_deliverable` now enforces this inside the leader function
-itself, before a result can ever reach validator comparison or state:
-ACCEPTED must carry percent 100, REJECTED must carry percent 0, and
-PARTIAL must carry a percent strictly between 1 and 99. A second,
-identical check runs again immediately before state is mutated, as
-defense in depth against any future code path that might bypass the
-leader function.
+## Why release_funds validates the decision/percentage combination, and why PARTIAL uses discrete buckets
+
+A steward review asked that validators bind the payout percentage to
+the decision, rather than trusting whatever a leader proposes. The
+first fix addressed this by validating the combination inside the
+leader function and again before state mutation, but the steward
+correctly pointed out that this still was not enough: validators were
+only comparing the `decision` field with each other, not the
+`percent` field, so the percentage itself was never actually agreed
+upon by consensus, only individually range-checked by whichever
+validator happened to run.
+
+The fix was to restrict PARTIAL to a small, fixed set of percentages
+(25, 50, or 75) instead of an open 0-100 range, and to make
+`validator_fn` require both the `decision` field and the `percent`
+field to match exactly between the leader's run and each validator's
+run. An open numeric range would rarely produce identical values
+across independent LLM calls, making genuine consensus on a specific
+number impractical; a small discrete set makes it realistic for
+independent validators to converge on the same bucket, so the payout
+percentage is now genuinely bound by the Equivalence Principle rather
+than asserted by the leader alone.
 
 ## Why value transfers use gl.get_contract_at(...).emit(value=...).__receive__()
 
-Sending native GEN out of a contract turned out to need a very
-specific, documented call shape. Several plausible-looking
-alternatives, including `gl.emit_transfer(address, amount)`, a bare
-`emit_transfer(address, amount)`, and `gl.ContractAt(address).emit_transfer(value=amount)`,
-all failed against the deployed SDK with AttributeError or NameError.
-The pattern that actually works, confirmed against GenLayer's official
-SDK API reference, is to obtain a proxy for the target address with
-`gl.get_contract_at(address)`, attach the value with `.emit(value=amount)`,
-and invoke `.__receive__()`, which is the documented handler for a
-plain value transfer with no specific method call attached. This was
-verified end to end on GenLayer Studio: `release_funds` and
-`cancel_agreement` both now move real GEN between the contract and the
-client or worker address.
-
-## Why DisputeEscalation caps escalation at three stages
-
-An unbounded escalation process could be dragged out indefinitely by
-a party unwilling to accept a final answer. A fixed maximum of three
-stages guarantees that every dispute reaches a final, deterministic
-end state (UPHELD or OVERTURNED) in a bounded number of steps, while
-still giving a challenger more than one opportunity to present a
-stronger case.
+Sending native GEN out of a contract needed a very specific, documented
+call shape. Several plausible-looking alternatives, including
+`gl.emit_transfer(address, amount)`, a bare `emit_transfer(address,
+amount)`,
