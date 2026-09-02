@@ -10,43 +10,50 @@ state can or cannot change under which outcomes.
 
 Holds a client's funds in escrow for a piece of work and releases them
 only once GenLayer validators independently agree on whether the
-delivered evidence satisfies the agreed specification. Also provides a
-recovery path so funds are never permanently locked.
+delivered evidence satisfies the agreed specification. Provides two
+separate recovery paths so funds are never permanently locked, no
+matter which stage an agreement gets stuck at.
 
 **How consensus is used**
 
 `evaluate_deliverable` runs a custom leader/validator function. The
 leader asks an LLM to compare the specification against the submitted
-evidence and return one of ACCEPTED, REJECTED, or PARTIAL, plus a
-percentage for PARTIAL. Every validator independently re-runs the same
-comparison. Only the objective `decision` field must match across
-validators; the free-text reasoning and the exact percentage are
-allowed to vary slightly between independent LLM calls, so only the
-field the outcome actually depends on is bound by consensus. The
-decision/percentage combination itself is validated inside the leader
-function before it can ever reach state (ACCEPTED must carry 100,
-REJECTED must carry 0, PARTIAL must carry 1-99), with a second
-defense-in-depth check at the point of state mutation.
+evidence and return one of ACCEPTED, REJECTED, or PARTIAL. For
+ACCEPTED the percent must be exactly 100, for REJECTED exactly 0, and
+for PARTIAL the LLM must pick one of a small fixed set (25, 50, or
+75). Every validator independently re-runs the same comparison, and
+`validator_fn` requires BOTH the decision field AND the percent field
+to match exactly across the leader's run and each validator's run.
+Restricting PARTIAL to three discrete buckets, rather than an open
+0-100 range, is what makes genuine agreement on the payout-relevant
+number realistic; an open range would rarely produce identical values
+across independent LLM calls.
 
-`release_funds` and `cancel_agreement` are fully deterministic and do
-not use consensus, since moving already-agreed-upon funds is a
-mechanical bookkeeping step, not a judgment call.
+`release_funds`, `cancel_agreement`, and `propose_resolution` are
+fully deterministic and do not use the Equivalence Principle, since
+moving already-agreed-upon funds, or checking whether two parties
+independently proposed the same outcome, are mechanical operations,
+not judgment calls.
 
-**Terminal settlement and recovery**
+**Terminal settlement and two recovery paths**
 
 - `release_funds` can only be called once an agreement has reached
-  ACCEPTED, REJECTED, or PARTIAL, and only once per agreement. ACCEPTED
-  sends the full amount to the worker, REJECTED returns the full amount
-  to the client, and PARTIAL splits the amount according to the agreed
-  percentage.
-- `cancel_agreement` lets the client reclaim the full deposit, but only
-  while the agreement is still PENDING and the worker has not yet
-  submitted anything. This prevents funds from being locked forever if
-  a worker never engages, without allowing a client to cancel after
-  work has already been submitted for evaluation.
+  ACCEPTED, REJECTED, or PARTIAL, and only pays out once per
+  agreement. ACCEPTED sends the full amount to the worker, REJECTED
+  returns the full amount to the client, and PARTIAL splits the
+  amount according to the agreed percentage.
+- `cancel_agreement` (pre-submission recovery) lets the client reclaim
+  the full deposit, but only while the agreement is still PENDING,
+  i.e. before the worker has submitted anything.
+- `propose_resolution` (post-submission recovery) covers the case
+  where evidence has been submitted but `evaluate_deliverable` is
+  never successfully called. Either the client or the worker can
+  propose a decision and percent; the agreement only settles once
+  both sides have independently proposed the exact same outcome.
+  Neither party can force a result alone, and no block timestamp is
+  required, since `gl.block.timestamp` does not exist in this SDK.
 - Value is sent using GenLayer's documented value-transfer pattern,
-  `gl.get_contract_at(address).emit(value=amount).__receive__()`, which
-  performs a real transfer to a client or worker address.
+  `gl.get_contract_at(address).emit(value=amount).__receive__()`.
 
 **Safety properties**
 
@@ -54,18 +61,21 @@ mechanical bookkeeping step, not a judgment call.
   a positive payment and a non-empty spec.
 - `submit_deliverable` can only be called once, and only by the
   address registered as the worker at creation time.
-- `evaluate_deliverable` can only run once per agreement; a rejected
-  or accepted agreement cannot be re-evaluated to "shop" for a
-  different outcome.
-- No state transition to ACCEPTED, REJECTED, or PARTIAL happens
-  without validator consensus on the decision field, and the
-  decision/percentage combination is enforced rather than trusted.
-- `release_funds` can only move funds once per agreement, guarded by a
-  `settled` flag, so a settled agreement cannot be paid out twice.
+- `evaluate_deliverable` can only run once per agreement (it requires
+  status SUBMITTED); a decided agreement cannot be re-evaluated to
+  "shop" for a different outcome.
+- The decision/percent combination is enforced by every validator
+  independently before it can ever be compared, and again at the
+  point of state mutation, not merely trusted from the leader.
+- `release_funds` can only move funds once per agreement, guarded by
+  a `settled` flag.
 - `cancel_agreement` can only be called by the client, only while
-  PENDING, and only before any deliverable evidence has been
-  submitted, so a worker who has already submitted work cannot be
-  cut out by a late cancellation.
+  PENDING, so a worker who has already submitted work cannot be cut
+  out by a late cancellation.
+- `propose_resolution` only accepts proposals from the registered
+  client or worker on that specific agreement, only while status is
+  SUBMITTED, and only settles the agreement once both proposals are
+  byte-for-byte identical.
 
 ## EvidenceCorroboration
 
